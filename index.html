@@ -696,19 +696,26 @@
   }
 
   // ---------- Storage ----------
+  // Uses plain localStorage since this runs as a standalone hosted page (not inside a Claude artifact).
+  // Wrapped in try/catch and returns a Promise so the rest of the app's async flow stays unchanged.
   function loadState(){
-    return window.storage.get(STORAGE_KEY, false).then(function(res){
-      if (res && res.value){
-        try { state = JSON.parse(res.value); }
-        catch(e){ state = defaultState(); }
-      } else {
+    return new Promise(function(resolve){
+      try {
+        var raw = localStorage.getItem(STORAGE_KEY);
+        if (raw){
+          try { state = JSON.parse(raw); }
+          catch(e){ state = defaultState(); }
+        } else {
+          state = defaultState();
+        }
+      } catch(e){
+        // localStorage unavailable (private mode, etc.) - fall back to in-memory only
+        console.error("localStorage unavailable, using in-memory state", e);
         state = defaultState();
       }
-      // backfill structure safety
       if (!state.pool) state.pool = [];
       if (!state.weeks) state.weeks = {};
-    }).catch(function(){
-      state = defaultState();
+      resolve();
     });
   }
 
@@ -716,9 +723,11 @@
   function saveState(){
     clearTimeout(saveTimer);
     saveTimer = setTimeout(function(){
-      window.storage.set(STORAGE_KEY, JSON.stringify(state), false).catch(function(e){
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } catch(e){
         console.error("save failed", e);
-      });
+      }
     }, 150);
   }
 
