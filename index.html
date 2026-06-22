@@ -61,21 +61,25 @@
     align-items: baseline;
   }
   .week-label {
-    font-size: 13px;
-    color: var(--text-dim);
-    letter-spacing: 0.02em;
+    font-size: 19px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: 0.01em;
   }
   .week-nav {
     display: flex;
-    gap: 4px;
+    gap: 6px;
   }
   .week-nav button {
-    background: none;
-    border: none;
-    color: var(--text-dim);
-    font-size: 16px;
-    padding: 4px 8px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border-soft);
+    color: var(--text);
+    font-size: 22px;
+    font-weight: 600;
+    padding: 6px 18px;
+    border-radius: 10px;
     cursor: pointer;
+    line-height: 1.2;
   }
   .tabs {
     display: flex;
@@ -241,7 +245,10 @@
     align-items: center;
     gap: 8px;
     margin-bottom: 8px;
-    padding-left: 2px;
+    padding: 6px 2px;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
   }
   .pool-section-head .cat-dot { width: 9px; height: 9px; }
   .pool-section-title {
@@ -256,6 +263,18 @@
     color: var(--text-faint);
     margin-left: auto;
   }
+  .pool-section-chevron {
+    font-size: 12px;
+    color: var(--text-faint);
+    transition: transform 0.15s;
+    margin-left: 2px;
+    flex-shrink: 0;
+  }
+  .pool-section-chevron.collapsed { transform: rotate(-90deg); }
+  .pool-section-body {
+    overflow: hidden;
+  }
+  .pool-section-body.collapsed { display: none; }
 
   .pool-task {
     display: flex;
@@ -557,6 +576,82 @@
     margin-top: 2px;
   }
 
+  /* Edit task modal */
+  .edit-field-label {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    margin-top: 14px;
+  }
+  .edit-field-label:first-of-type { margin-top: 0; }
+  .edit-input-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .edit-input-row input[type=text] {
+    flex: 1;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 13px;
+    border-radius: 10px;
+    font-size: 15px;
+  }
+  .edit-input-row input[type=number] {
+    width: 72px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 8px;
+    border-radius: 10px;
+    font-size: 15px;
+    text-align: center;
+  }
+  .no-duration-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--text-dim);
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .no-duration-toggle .switch {
+    width: 34px; height: 20px;
+    background: var(--border);
+    border-radius: 11px;
+    position: relative;
+    transition: background 0.15s;
+    flex-shrink: 0;
+  }
+  .no-duration-toggle .switch::after {
+    content: "";
+    position: absolute;
+    width: 16px; height: 16px;
+    background: var(--text-dim);
+    border-radius: 50%;
+    top: 2px; left: 2px;
+    transition: transform 0.15s, background 0.15s;
+  }
+  .no-duration-toggle.on .switch { background: var(--amber-dim); }
+  .no-duration-toggle.on .switch::after {
+    transform: translateX(14px);
+    background: var(--amber);
+  }
+  .modal-delete {
+    margin-top: 14px;
+    text-align: center;
+    color: var(--red);
+    font-size: 14px;
+    padding: 10px;
+    cursor: pointer;
+  }
+  .task-text.editable { cursor: pointer; }
+  .task-hours.no-duration { color: var(--text-faint); font-style: italic; }
+
   /* FAB / bottom bar handled by tabs already */
 
   .empty-state {
@@ -683,14 +778,15 @@
         // avoid duplicate seeding (defensive, shouldn't normally happen on a fresh week)
         var already = weekData[dayCode].some(function(t){ return t.poolId === task.id; });
         if (already) return;
-        weekData[dayCode].push({
+        var newTaskInstance = {
           id: uid(),
           poolId: task.id,
           cat: task.cat,
           text: task.text,
-          hours: task.hours,
           done: false
-        });
+        };
+        if (task.hours !== undefined && task.hours !== null) newTaskInstance.hours = task.hours;
+        weekData[dayCode].push(newTaskInstance);
       });
     });
   }
@@ -788,14 +884,24 @@
       dateObj.setDate(dateObj.getDate() + DAYS.indexOf(dCode));
       var isToday = (dCode === todayCode);
 
-      var hoursTotal = 0, hoursDone = 0;
-      list.forEach(function(t){ hoursTotal += (t.hours||0); if (t.done) hoursDone += (t.hours||0); });
+      var hoursTotal = 0, hoursDone = 0, untimedCount = 0, untimedDone = 0;
+      list.forEach(function(t){
+        if (t.hours === undefined || t.hours === null){
+          untimedCount++;
+          if (t.done) untimedDone++;
+        } else {
+          hoursTotal += t.hours;
+          if (t.done) hoursDone += t.hours;
+        }
+      });
       var pct = hoursTotal > 0 ? Math.min(100, (hoursDone/hoursTotal)*100) : 0;
       var overBudget = hoursTotal > (DAY_HOUR_BUDGET*1.6);
+      var hoursLabel = hoursDone.toFixed(1)+' / '+hoursTotal.toFixed(1)+'h';
+      if (untimedCount > 0) hoursLabel += '  ·  '+untimedDone+'/'+untimedCount+' untimed';
 
       html += '<div class="day-card'+(isToday?' today':'')+'" data-day="'+dCode+'">';
       html += '<div class="day-head"><div class="day-name">'+(isToday?'<span class="today-dot"></span>':'')+DAY_FULL[dCode]+', '+fmtShort(dateObj)+'</div>';
-      html += '<div class="day-hours">'+hoursDone.toFixed(1)+' / '+hoursTotal.toFixed(1)+'h</div></div>';
+      html += '<div class="day-hours">'+hoursLabel+'</div></div>';
       html += '<div class="budget-bar"><div class="budget-fill'+(overBudget?' over':'')+'" style="width:'+pct+'%"></div></div>';
 
       if (list.length === 0){
@@ -804,11 +910,12 @@
         html += '<div class="day-tasks">';
         list.forEach(function(t){
           var ci = catInfo(t.cat);
+          var hrsTag = (t.hours === undefined || t.hours === null) ? "" : '<div class="task-hours">'+formatHrs(t.hours)+'</div>';
           html += '<div class="task-row'+(t.done?' done':'')+'" data-task="'+t.id+'" data-day="'+dCode+'">';
           html += '<div class="task-check'+(t.done?' checked':'')+'" data-action="toggle">'+(t.done?'✓':'')+'</div>';
           html += '<div class="cat-dot '+ci.dotClass+'"></div>';
-          html += '<div class="task-text">'+escapeHtml(t.text)+'</div>';
-          html += '<div class="task-hours">'+formatHrs(t.hours)+'</div>';
+          html += '<div class="task-text editable" data-action="edit">'+escapeHtml(t.text)+'</div>';
+          html += hrsTag;
           html += '<div class="task-remove" data-action="remove">×</div>';
           html += '</div>';
         });
@@ -824,7 +931,7 @@
 
   function formatHrs(h){
     if (h === undefined || h === null) return "";
-    return (h % 1 === 0 ? h : h) + "h";
+    return roundHr(h) + "h";
   }
 
   function escapeHtml(s){
@@ -843,12 +950,20 @@
         toggleTaskDone(day, id);
       });
     });
-    view.querySelectorAll(".task-remove").forEach(function(el){
+    view.querySelectorAll('[data-action="remove"]').forEach(function(el){
       el.addEventListener("click", function(e){
         var row = e.target.closest(".task-row");
         var day = row.getAttribute("data-day");
         var id = row.getAttribute("data-task");
         removeTaskFromDay(day, id);
+      });
+    });
+    view.querySelectorAll('[data-action="edit"]').forEach(function(el){
+      el.addEventListener("click", function(e){
+        var row = e.target.closest(".task-row");
+        var day = row.getAttribute("data-day");
+        var id = row.getAttribute("data-task");
+        openEditTaskModal(day, id);
       });
     });
     view.querySelectorAll(".add-to-day").forEach(function(el){
@@ -873,24 +988,115 @@
     render();
   }
 
+  // transient UI state for the edit modal's "no duration" toggle
+  var editNoDuration = false;
+
+  function openEditTaskModal(dayCode, taskId){
+    var wk = weekKey(currentWeekStart);
+    var list = state.weeks[wk][dayCode];
+    var t = list.find(function(x){ return x.id === taskId; });
+    if (!t) return;
+    editNoDuration = (t.hours === undefined || t.hours === null);
+    renderEditTaskModal(dayCode, t);
+  }
+
+  function renderEditTaskModal(dayCode, t){
+    var html = '<div class="modal-overlay" id="modalOverlay"><div class="modal-sheet">';
+    html += '<div class="modal-title">Edit task</div>';
+
+    html += '<div class="edit-field-label">Task</div>';
+    html += '<div class="edit-input-row"><input type="text" id="editTextInput" value="'+escapeAttr(t.text)+'"></div>';
+
+    html += '<div class="edit-field-label">Duration</div>';
+    html += '<div class="edit-input-row"><input type="number" min="0" step="0.25" id="editHoursInput" value="'+(editNoDuration ? "" : t.hours)+'" '+(editNoDuration?"disabled":"")+' placeholder="hr"></div>';
+
+    html += '<div class="no-duration-toggle'+(editNoDuration?' on':'')+'" id="editNoDurToggle"><div class="switch"></div><span>No set duration (e.g. done passively)</span></div>';
+
+    html += '<div class="modal-confirm" id="modalSaveEdit">Save</div>';
+    html += '<div class="modal-delete" id="modalDeleteEdit">Remove from this day</div>';
+    html += '<div class="modal-cancel" id="modalCancel">Cancel</div>';
+    html += '</div></div>';
+
+    document.getElementById("modalRoot").innerHTML = html;
+    document.getElementById("modalCancel").addEventListener("click", closeModal);
+    document.getElementById("modalOverlay").addEventListener("click", function(e){
+      if (e.target.id === "modalOverlay") closeModal();
+    });
+
+    document.getElementById("editNoDurToggle").addEventListener("click", function(){
+      editNoDuration = !editNoDuration;
+      // preserve whatever text was typed so far before re-render
+      var textVal = document.getElementById("editTextInput").value;
+      t = Object.assign({}, t, {text: textVal});
+      renderEditTaskModal(dayCode, t);
+    });
+
+    document.getElementById("modalSaveEdit").addEventListener("click", function(){
+      var newText = document.getElementById("editTextInput").value.trim();
+      if (!newText) return;
+      var newHours = null;
+      if (!editNoDuration){
+        var hVal = parseFloat(document.getElementById("editHoursInput").value);
+        newHours = (isNaN(hVal) || hVal <= 0) ? null : roundHr(hVal);
+      }
+      saveTaskEdit(dayCode, t.id, newText, newHours);
+      closeModal();
+    });
+
+    document.getElementById("modalDeleteEdit").addEventListener("click", function(){
+      removeTaskFromDay(dayCode, t.id);
+      closeModal();
+    });
+  }
+
+  function escapeAttr(s){
+    return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
+  }
+
+  function saveTaskEdit(dayCode, taskId, newText, newHours){
+    var wk = weekKey(currentWeekStart);
+    var list = state.weeks[wk][dayCode];
+    var t = list.find(function(x){ return x.id === taskId; });
+    if (!t) return;
+    t.text = newText;
+    if (newHours === null){
+      delete t.hours;
+    } else {
+      t.hours = newHours;
+    }
+    saveState();
+    render();
+  }
+
+  // transient UI state: which pool categories are collapsed (persists only for this session)
+  var collapsedCats = {};
+
   // ---------- Pool view ----------
   function renderPoolView(){
     var html = "";
     CATS.forEach(function(cat){
       var items = state.pool.filter(function(t){ return t.cat === cat.id; });
       var totalH = items.reduce(function(s,t){ return s + (t.hours||0); }, 0);
+      var isCollapsed = !!collapsedCats[cat.id];
+
       html += '<div class="pool-section">';
-      html += '<div class="pool-section-head"><div class="cat-dot '+cat.dotClass+'"></div>';
+      html += '<div class="pool-section-head" data-action="toggleCollapse" data-cat="'+cat.id+'">';
+      html += '<div class="cat-dot '+cat.dotClass+'"></div>';
       html += '<div class="pool-section-title">'+cat.label+'</div>';
-      html += '<div class="pool-section-total">'+totalH.toFixed(1)+'h total</div></div>';
+      html += '<div class="pool-section-total">'+(totalH > 0 ? totalH.toFixed(1)+'h total' : items.length+' task'+(items.length!==1?'s':''))+'</div>';
+      html += '<div class="pool-section-chevron'+(isCollapsed?' collapsed':'')+'">▾</div>';
+      html += '</div>';
+
+      html += '<div class="pool-section-body'+(isCollapsed?' collapsed':'')+'" data-body="'+cat.id+'">';
 
       if (items.length === 0){
         html += '<div class="pool-empty">No tasks queued</div>';
       } else {
         items.forEach(function(t){
+          var hrsTag = (t.hours === undefined || t.hours === null) ? "" : '<div class="pool-task-hrs">'+formatHrs(t.hours)+'</div>';
           html += '<div class="pool-task" data-id="'+t.id+'">';
           html += '<div class="pool-task-text">'+escapeHtml(t.text)+(t.recurring ? '<span class="recurring-badge">'+recurLabel(t)+'</span>' : '')+'</div>';
-          html += '<div class="pool-task-hrs">'+formatHrs(t.hours)+'</div>';
+          html += hrsTag;
           html += '<div class="pool-task-assign" data-action="assign" data-id="'+t.id+'">Assign</div>';
           html += '<div class="pool-task-del" data-action="delPool" data-id="'+t.id+'">×</div>';
           html += '</div>';
@@ -899,7 +1105,7 @@
 
       html += '<div class="add-task-form" data-cat="'+cat.id+'">';
       html += '<input type="text" placeholder="Add '+cat.label.toLowerCase()+' task…" data-role="text">';
-      html += '<input type="number" min="0.25" step="0.25" placeholder="hr" data-role="hours">';
+      html += '<input type="number" min="0.25" step="0.25" placeholder="hr (optional)" data-role="hours">';
       html += '<button data-action="addPool" data-cat="'+cat.id+'">Add</button>';
       html += '</div>';
       html += '<div class="recur-toggle" data-action="toggleRecur" data-cat="'+cat.id+'"><div class="switch"></div><span>Make this recurring</span></div>';
@@ -917,7 +1123,8 @@
       html += '</div>';
       html += '</div>';
 
-      html += '</div>';
+      html += '</div>'; // close pool-section-body
+      html += '</div>'; // close pool-section
     });
 
     document.getElementById("poolView").innerHTML = html;
@@ -933,6 +1140,16 @@
 
   function bindPoolViewEvents(){
     var view = document.getElementById("poolView");
+    view.querySelectorAll('[data-action="toggleCollapse"]').forEach(function(el){
+      el.addEventListener("click", function(e){
+        var cat = el.getAttribute("data-cat");
+        collapsedCats[cat] = !collapsedCats[cat];
+        var chevron = el.querySelector(".pool-section-chevron");
+        var body = view.querySelector('[data-body="'+cat+'"]');
+        chevron.classList.toggle("collapsed", !!collapsedCats[cat]);
+        body.classList.toggle("collapsed", !!collapsedCats[cat]);
+      });
+    });
     view.querySelectorAll('[data-action="assign"]').forEach(function(el){
       el.addEventListener("click", function(e){
         openAssignDayModal(e.target.getAttribute("data-id"));
@@ -954,12 +1171,17 @@
         var textInput = form.querySelector('[data-role="text"]');
         var hoursInput = form.querySelector('[data-role="hours"]');
         var text = textInput.value.trim();
-        var hours = parseFloat(hoursInput.value);
+        var hoursRaw = hoursInput.value.trim();
         if (!text) return;
-        if (isNaN(hours) || hours <= 0) hours = 0.5;
+        var hours = null;
+        if (hoursRaw !== ""){
+          var parsed = parseFloat(hoursRaw);
+          if (!isNaN(parsed) && parsed > 0) hours = roundHr(parsed);
+        }
 
         var ui = getRecurUi(cat);
-        var newTask = {id: uid(), cat: cat, text: text, hours: hours};
+        var newTask = {id: uid(), cat: cat, text: text};
+        if (hours !== null) newTask.hours = hours;
         if (ui.on && ui.days.length > 0){
           newTask.recurring = true;
           newTask.recurDays = ui.days.slice();
@@ -1041,18 +1263,6 @@
   }
 
   // ---------- Assign modal (pick day(s) for a pool task, with split support) ----------
-  function suggestedDay(hoursNeeded){
-    // find day in current week with least hours loaded, that still fits reasonably
-    var wk = weekKey(currentWeekStart);
-    var weekData = ensureWeek(wk);
-    var best = null, bestLoad = Infinity;
-    DAYS.forEach(function(d){
-      var load = (weekData[d]||[]).reduce(function(s,t){ return s+(t.hours||0); }, 0);
-      if (load < bestLoad){ bestLoad = load; best = d; }
-    });
-    return best;
-  }
-
   var assignSelection = []; // transient: days selected in the current modal
 
   function openAssignDayModal(poolId){
@@ -1060,30 +1270,29 @@
     if (!task) return;
     var wk = weekKey(currentWeekStart);
     var weekData = ensureWeek(wk);
-    var suggested = suggestedDay(task.hours);
-    assignSelection = [suggested]; // default: single day pre-selected
+    assignSelection = []; // start empty - fully manual selection, no suggestion
 
-    renderAssignModal(task, weekData, suggested);
+    renderAssignModal(task, weekData);
   }
 
-  function renderAssignModal(task, weekData, suggested){
+  function renderAssignModal(task, weekData){
+    var hrsLabel = (task.hours === undefined || task.hours === null) ? "" : ' ('+formatHrs(task.hours)+')';
     var html = '<div class="modal-overlay" id="modalOverlay"><div class="modal-sheet">';
-    html += '<div class="modal-title">Assign "'+escapeHtml(task.text)+'" ('+formatHrs(task.hours)+')</div>';
-    html += '<div class="modal-subtext">Tap to select one or more days. Hours split evenly if you pick more than one.</div>';
+    html += '<div class="modal-title">Assign "'+escapeHtml(task.text)+'"'+hrsLabel+'</div>';
+    html += '<div class="modal-subtext">Tap to select one or more days.'+((task.hours!==undefined && task.hours!==null) ? ' Hours split evenly if you pick more than one.' : '')+'</div>';
 
     DAYS.forEach(function(d){
       var load = (weekData[d]||[]).reduce(function(s,t){ return s+(t.hours||0); }, 0);
-      var star = (d === suggested) ? " · suggested" : "";
       var sel = assignSelection.indexOf(d) > -1;
       html += '<div class="day-pick-row multi'+(sel?' selected':'')+'" data-pick="'+d+'">';
-      html += '<span class="row-left"><span class="check-box">✓</span>'+DAY_FULL[d]+star+'</span>';
+      html += '<span class="row-left"><span class="check-box">✓</span>'+DAY_FULL[d]+'</span>';
       html += '<span class="pct">'+load.toFixed(1)+'h loaded</span>';
       html += '</div>';
     });
 
     var splitCount = assignSelection.length;
-    var perDay = splitCount > 0 ? (task.hours / splitCount) : task.hours;
-    if (splitCount > 1){
+    if (splitCount > 1 && task.hours !== undefined && task.hours !== null){
+      var perDay = task.hours / splitCount;
       html += '<div class="split-note">Splitting into '+splitCount+' × '+roundHr(perDay)+'h</div>';
     }
 
@@ -1102,7 +1311,7 @@
         var idx = assignSelection.indexOf(day);
         if (idx > -1) assignSelection.splice(idx,1);
         else assignSelection.push(day);
-        renderAssignModal(task, weekData, suggested);
+        renderAssignModal(task, weekData);
       });
     });
     var confirmBtn = document.getElementById("modalConfirmAssign");
@@ -1123,23 +1332,25 @@
     if (!task || dayCodes.length === 0) return;
     var wk = weekKey(currentWeekStart);
     var weekData = ensureWeek(wk);
-    var perDay = roundHr(task.hours / dayCodes.length);
+    var hasHours = (task.hours !== undefined && task.hours !== null);
+    var perDay = hasHours ? roundHr(task.hours / dayCodes.length) : null;
 
     dayCodes.forEach(function(dayCode, i){
-      // last day absorbs rounding remainder so total matches original hours
       var hrs = perDay;
-      if (i === dayCodes.length - 1){
+      if (hasHours && i === dayCodes.length - 1){
+        // last day absorbs rounding remainder so total matches original hours
         var assignedSoFar = perDay * (dayCodes.length - 1);
         hrs = roundHr(task.hours - assignedSoFar);
       }
-      weekData[dayCode].push({
+      var newTaskInstance = {
         id: uid(),
         poolId: task.id,
         cat: task.cat,
         text: task.text + (dayCodes.length > 1 ? " (part)" : ""),
-        hours: hrs,
         done: false
-      });
+      };
+      if (hasHours) newTaskInstance.hours = hrs;
+      weekData[dayCode].push(newTaskInstance);
     });
 
     // remove from pool unless recurring
