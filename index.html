@@ -77,9 +77,12 @@
     font-size: 22px;
     font-weight: 600;
     padding: 6px 18px;
+    min-width: 44px;
+    min-height: 44px;
     border-radius: 10px;
     cursor: pointer;
     line-height: 1.2;
+    touch-action: manipulation;
   }
   .tabs {
     display: flex;
@@ -570,6 +573,16 @@
     flex-shrink: 0;
   }
 
+  .concurrent-badge {
+    display: inline-block;
+    font-size: 11px;
+    color: var(--green);
+    border: 1px solid var(--green-dim);
+    border-radius: 5px;
+    padding: 1px 6px;
+    margin-left: 6px;
+  }
+
   .split-note {
     font-size: 11.5px;
     color: var(--text-faint);
@@ -640,6 +653,29 @@
   .no-duration-toggle.on .switch::after {
     transform: translateX(14px);
     background: var(--amber);
+  }
+  .no-duration-toggle.disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .concurrent-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .concurrent-option {
+    padding: 11px 13px;
+    border-radius: 10px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    font-size: 14px;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .concurrent-option.selected {
+    background: var(--green-dim);
+    border-color: var(--green);
+    color: var(--text);
   }
   .modal-delete {
     margin-top: 14px;
@@ -714,10 +750,7 @@
 
   function defaultState(){
     return {
-      pool: [
-        {id: uid(), cat:"fitness", text:"Walk", hours:1, recurring:true, recurDays:["MON","TUE","WED","THU","FRI","SAT","SUN"]},
-        {id: uid(), cat:"fitness", text:"Lift session", hours:1, recurring:true, recurDays:["FRI","SAT","SUN"]}
-      ],
+      pool: [],
       weeks: {} // key: weekKey (monday iso date) -> { MON:[taskInstance...], ... }
     };
   }
@@ -773,21 +806,29 @@
   function seedRecurringTasks(wk){
     var weekData = state.weeks[wk];
     state.pool.forEach(function(task){
-      if (!task.recurring || !task.recurDays) return;
-      task.recurDays.forEach(function(dayCode){
-        // avoid duplicate seeding (defensive, shouldn't normally happen on a fresh week)
-        var already = weekData[dayCode].some(function(t){ return t.poolId === task.id; });
-        if (already) return;
-        var newTaskInstance = {
-          id: uid(),
-          poolId: task.id,
-          cat: task.cat,
-          text: task.text,
-          done: false
-        };
-        if (task.hours !== undefined && task.hours !== null) newTaskInstance.hours = task.hours;
-        weekData[dayCode].push(newTaskInstance);
-      });
+      seedSingleRecurringTaskIntoWeek(task, wk);
+    });
+  }
+
+  // Seeds one recurring task into one week's data, skipping days already populated for it.
+  // Used both for brand-new weeks (seedRecurringTasks) and for immediately applying a
+  // freshly-created recurring task to the week currently being viewed.
+  function seedSingleRecurringTaskIntoWeek(task, wk){
+    if (!task.recurring || !task.recurDays) return;
+    var weekData = state.weeks[wk];
+    if (!weekData) return;
+    task.recurDays.forEach(function(dayCode){
+      var already = weekData[dayCode].some(function(t){ return t.poolId === task.id; });
+      if (already) return;
+      var newTaskInstance = {
+        id: uid(),
+        poolId: task.id,
+        cat: task.cat,
+        text: task.text,
+        done: false
+      };
+      if (task.hours !== undefined && task.hours !== null) newTaskInstance.hours = task.hours;
+      weekData[dayCode].push(newTaskInstance);
     });
   }
 
@@ -886,6 +927,10 @@
 
       var hoursTotal = 0, hoursDone = 0, untimedCount = 0, untimedDone = 0;
       list.forEach(function(t){
+        if (t.concurrentWith){
+          // piggybacking on another task's time - doesn't add to the day's load
+          return;
+        }
         if (t.hours === undefined || t.hours === null){
           untimedCount++;
           if (t.done) untimedDone++;
@@ -910,11 +955,16 @@
         html += '<div class="day-tasks">';
         list.forEach(function(t){
           var ci = catInfo(t.cat);
-          var hrsTag = (t.hours === undefined || t.hours === null) ? "" : '<div class="task-hours">'+formatHrs(t.hours)+'</div>';
+          var concurrentLabel = "";
+          if (t.concurrentWith){
+            var linkedTask = list.find(function(x){ return x.id === t.concurrentWith; });
+            if (linkedTask) concurrentLabel = '<span class="concurrent-badge">⏱ with '+escapeHtml(linkedTask.text)+'</span>';
+          }
+          var hrsTag = (t.concurrentWith || t.hours === undefined || t.hours === null) ? "" : '<div class="task-hours">'+formatHrs(t.hours)+'</div>';
           html += '<div class="task-row'+(t.done?' done':'')+'" data-task="'+t.id+'" data-day="'+dCode+'">';
           html += '<div class="task-check'+(t.done?' checked':'')+'" data-action="toggle">'+(t.done?'✓':'')+'</div>';
           html += '<div class="cat-dot '+ci.dotClass+'"></div>';
-          html += '<div class="task-text editable" data-action="edit">'+escapeHtml(t.text)+'</div>';
+          html += '<div class="task-text editable" data-action="edit">'+escapeHtml(t.text)+concurrentLabel+'</div>';
           html += hrsTag;
           html += '<div class="task-remove" data-action="remove">×</div>';
           html += '</div>';
@@ -983,13 +1033,19 @@
   function removeTaskFromDay(dayCode, taskId){
     var wk = weekKey(currentWeekStart);
     var list = state.weeks[wk][dayCode];
+    // detach any tasks that were riding on this one's time, so they don't
+    // silently disappear from the hour total with a dangling reference
+    list.forEach(function(x){
+      if (x.concurrentWith === taskId) delete x.concurrentWith;
+    });
     state.weeks[wk][dayCode] = list.filter(function(x){ return x.id !== taskId; });
     saveState();
     render();
   }
 
-  // transient UI state for the edit modal's "no duration" toggle
+  // transient UI state for the edit modal's "no duration" toggle and concurrent picker
   var editNoDuration = false;
+  var editConcurrentWith = null; // null = not concurrent, otherwise the id of the task it rides along with
 
   function openEditTaskModal(dayCode, taskId){
     var wk = weekKey(currentWeekStart);
@@ -997,10 +1053,16 @@
     var t = list.find(function(x){ return x.id === taskId; });
     if (!t) return;
     editNoDuration = (t.hours === undefined || t.hours === null);
+    editConcurrentWith = t.concurrentWith || null;
     renderEditTaskModal(dayCode, t);
   }
 
   function renderEditTaskModal(dayCode, t){
+    var wk = weekKey(currentWeekStart);
+    var list = state.weeks[wk][dayCode];
+    // other tasks on this same day that this task could piggyback on (exclude itself and anything already concurrent with this one, to avoid chains)
+    var otherTasks = list.filter(function(x){ return x.id !== t.id && !x.concurrentWith; });
+
     var html = '<div class="modal-overlay" id="modalOverlay"><div class="modal-sheet">';
     html += '<div class="modal-title">Edit task</div>';
 
@@ -1008,9 +1070,22 @@
     html += '<div class="edit-input-row"><input type="text" id="editTextInput" value="'+escapeAttr(t.text)+'"></div>';
 
     html += '<div class="edit-field-label">Duration</div>';
-    html += '<div class="edit-input-row"><input type="number" min="0" step="0.25" id="editHoursInput" value="'+(editNoDuration ? "" : t.hours)+'" '+(editNoDuration?"disabled":"")+' placeholder="hr"></div>';
+    html += '<div class="edit-input-row"><input type="number" min="0" step="0.25" id="editHoursInput" value="'+(editNoDuration ? "" : t.hours)+'" '+((editNoDuration||editConcurrentWith)?"disabled":"")+' placeholder="hr"></div>';
 
-    html += '<div class="no-duration-toggle'+(editNoDuration?' on':'')+'" id="editNoDurToggle"><div class="switch"></div><span>No set duration (e.g. done passively)</span></div>';
+    html += '<div class="no-duration-toggle'+(editNoDuration?' on':'')+(editConcurrentWith?' disabled':'')+'" id="editNoDurToggle"><div class="switch"></div><span>No set duration (e.g. done passively)</span></div>';
+
+    if (otherTasks.length > 0){
+      html += '<div class="edit-field-label">Doing this at the same time as…</div>';
+      html += '<div class="concurrent-picker">';
+      html += '<div class="concurrent-option'+(editConcurrentWith===null?' selected':'')+'" data-concurrent="">None — counts on its own</div>';
+      otherTasks.forEach(function(other){
+        html += '<div class="concurrent-option'+(editConcurrentWith===other.id?' selected':'')+'" data-concurrent="'+other.id+'">'+escapeHtml(other.text)+'</div>';
+      });
+      html += '</div>';
+      if (editConcurrentWith){
+        html += '<div class="modal-subtext">This task\'s time won\'t be added to the day\'s total — it\'s already covered by the task above.</div>';
+      }
+    }
 
     html += '<div class="modal-confirm" id="modalSaveEdit">Save</div>';
     html += '<div class="modal-delete" id="modalDeleteEdit">Remove from this day</div>';
@@ -1024,22 +1099,32 @@
     });
 
     document.getElementById("editNoDurToggle").addEventListener("click", function(){
+      if (editConcurrentWith) return; // duration is moot while concurrent
       editNoDuration = !editNoDuration;
-      // preserve whatever text was typed so far before re-render
       var textVal = document.getElementById("editTextInput").value;
       t = Object.assign({}, t, {text: textVal});
       renderEditTaskModal(dayCode, t);
+    });
+
+    document.querySelectorAll("[data-concurrent]").forEach(function(el){
+      el.addEventListener("click", function(){
+        var val = el.getAttribute("data-concurrent");
+        editConcurrentWith = val === "" ? null : val;
+        var textVal = document.getElementById("editTextInput").value;
+        t = Object.assign({}, t, {text: textVal});
+        renderEditTaskModal(dayCode, t);
+      });
     });
 
     document.getElementById("modalSaveEdit").addEventListener("click", function(){
       var newText = document.getElementById("editTextInput").value.trim();
       if (!newText) return;
       var newHours = null;
-      if (!editNoDuration){
+      if (!editNoDuration && !editConcurrentWith){
         var hVal = parseFloat(document.getElementById("editHoursInput").value);
         newHours = (isNaN(hVal) || hVal <= 0) ? null : roundHr(hVal);
       }
-      saveTaskEdit(dayCode, t.id, newText, newHours);
+      saveTaskEdit(dayCode, t.id, newText, newHours, editConcurrentWith);
       closeModal();
     });
 
@@ -1053,7 +1138,7 @@
     return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
   }
 
-  function saveTaskEdit(dayCode, taskId, newText, newHours){
+  function saveTaskEdit(dayCode, taskId, newText, newHours, concurrentWith){
     var wk = weekKey(currentWeekStart);
     var list = state.weeks[wk][dayCode];
     var t = list.find(function(x){ return x.id === taskId; });
@@ -1064,6 +1149,14 @@
     } else {
       t.hours = newHours;
     }
+    if (concurrentWith){
+      t.concurrentWith = concurrentWith;
+    } else {
+      delete t.concurrentWith;
+    }
+    // safety: if other tasks were piggybacking on this one and this one just became
+    // concurrent with something else, leave them as-is (they still ride on this task's
+    // existence, not its own concurrency state) - no cascade needed.
     saveState();
     render();
   }
@@ -1105,7 +1198,7 @@
 
       html += '<div class="add-task-form" data-cat="'+cat.id+'">';
       html += '<input type="text" placeholder="Add '+cat.label.toLowerCase()+' task…" data-role="text">';
-      html += '<input type="number" min="0.25" step="0.25" placeholder="hr (optional)" data-role="hours">';
+      html += '<input type="number" min="0.25" step="0.25" placeholder="hr" data-role="hours">';
       html += '<button data-action="addPool" data-cat="'+cat.id+'">Add</button>';
       html += '</div>';
       html += '<div class="recur-toggle" data-action="toggleRecur" data-cat="'+cat.id+'"><div class="switch"></div><span>Make this recurring</span></div>';
@@ -1187,6 +1280,14 @@
           newTask.recurDays = ui.days.slice();
         }
         state.pool.push(newTask);
+
+        // If this new task is recurring, apply it immediately to the week
+        // currently being viewed too - not just future weeks created later.
+        if (newTask.recurring){
+          var wk = weekKey(currentWeekStart);
+          ensureWeek(wk); // make sure the week object exists before seeding into it
+          seedSingleRecurringTaskIntoWeek(newTask, wk);
+        }
 
         textInput.value = "";
         hoursInput.value = "";
@@ -1279,7 +1380,7 @@
     var hrsLabel = (task.hours === undefined || task.hours === null) ? "" : ' ('+formatHrs(task.hours)+')';
     var html = '<div class="modal-overlay" id="modalOverlay"><div class="modal-sheet">';
     html += '<div class="modal-title">Assign "'+escapeHtml(task.text)+'"'+hrsLabel+'</div>';
-    html += '<div class="modal-subtext">Tap to select one or more days.'+((task.hours!==undefined && task.hours!==null) ? ' Hours split evenly if you pick more than one.' : '')+'</div>';
+    html += '<div class="modal-subtext">Tap to select one or more days.</div>';
 
     DAYS.forEach(function(d){
       var load = (weekData[d]||[]).reduce(function(s,t){ return s+(t.hours||0); }, 0);
@@ -1291,10 +1392,6 @@
     });
 
     var splitCount = assignSelection.length;
-    if (splitCount > 1 && task.hours !== undefined && task.hours !== null){
-      var perDay = task.hours / splitCount;
-      html += '<div class="split-note">Splitting into '+splitCount+' × '+roundHr(perDay)+'h</div>';
-    }
 
     html += '<div class="modal-confirm'+(splitCount===0?' disabled':'')+'" id="modalConfirmAssign">'+(splitCount>1 ? "Assign to "+splitCount+" days" : "Assign")+'</div>';
     html += '<div class="modal-cancel" id="modalCancel">Cancel</div>';
@@ -1333,23 +1430,16 @@
     var wk = weekKey(currentWeekStart);
     var weekData = ensureWeek(wk);
     var hasHours = (task.hours !== undefined && task.hours !== null);
-    var perDay = hasHours ? roundHr(task.hours / dayCodes.length) : null;
 
-    dayCodes.forEach(function(dayCode, i){
-      var hrs = perDay;
-      if (hasHours && i === dayCodes.length - 1){
-        // last day absorbs rounding remainder so total matches original hours
-        var assignedSoFar = perDay * (dayCodes.length - 1);
-        hrs = roundHr(task.hours - assignedSoFar);
-      }
+    dayCodes.forEach(function(dayCode){
       var newTaskInstance = {
         id: uid(),
         poolId: task.id,
         cat: task.cat,
-        text: task.text + (dayCodes.length > 1 ? " (part)" : ""),
+        text: task.text,
         done: false
       };
-      if (hasHours) newTaskInstance.hours = hrs;
+      if (hasHours) newTaskInstance.hours = task.hours;
       weekData[dayCode].push(newTaskInstance);
     });
 
@@ -1405,16 +1495,28 @@
     });
   });
 
-  document.getElementById("prevWeek").addEventListener("click", function(){
+  function goToPrevWeek(){
     currentWeekStart.setDate(currentWeekStart.getDate()-7);
     currentWeekStart = startOfWeek(currentWeekStart);
     render();
-  });
-  document.getElementById("nextWeek").addEventListener("click", function(){
+  }
+  function goToNextWeek(){
     currentWeekStart.setDate(currentWeekStart.getDate()+7);
     currentWeekStart = startOfWeek(currentWeekStart);
     render();
-  });
+  }
+
+  var prevBtn = document.getElementById("prevWeek");
+  var nextBtn = document.getElementById("nextWeek");
+
+  prevBtn.addEventListener("click", goToPrevWeek);
+  nextBtn.addEventListener("click", goToNextWeek);
+  // Defensive: some iOS Safari contexts (home-screen web app mode) can swallow
+  // synthetic click events on rapid taps. Bind touchend as a backup, guarding
+  // against double-firing by preventing the default (which would otherwise
+  // also dispatch a click).
+  prevBtn.addEventListener("touchend", function(e){ e.preventDefault(); goToPrevWeek(); });
+  nextBtn.addEventListener("touchend", function(e){ e.preventDefault(); goToNextWeek(); });
 
   // ---------- Boot ----------
   loadState().then(function(){
